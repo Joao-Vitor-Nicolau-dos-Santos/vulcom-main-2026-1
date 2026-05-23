@@ -2,6 +2,7 @@ import prisma from '../database/client.js'
 import jwt from 'jsonwebtoken'
 import argon2 from 'argon2'
 
+
 const ARGON2_CONFIG = {
  type: argon2.argon2id,  // variante recomendada do algoritmo
  memoryCost: 65536,      // 64 KB de memória máxima utilizada
@@ -14,12 +15,17 @@ const controller = {}     // Objeto vazio
 
 controller.create = async function(req, res) {
   try {
-   // Caso exista o campo "password" em req.body, é
+    // Somente usuários administradores podem acessar este recurso
+   // HTTP 403: Forbidden(
+   if(! req?.authUser?.is_admin) return res.status(403).end()
+
+    // Caso exista o campo "password" em req.body, é
    // necessário gerar o hash da senha antes de
    // armazená-la no BD, usando o algoritmo argon2
    if(req.body.password) {
      req.body.password = await argon2.hash(req.body.password, ARGON2_CONFIG)
    }
+
 
     await prisma.user.create({ data: req.body })
 
@@ -36,8 +42,16 @@ controller.create = async function(req, res) {
 
 controller.retrieveAll = async function(req, res) {
   try {
-    const result = await prisma.user.findMany()
+    // Somente usuários administradores podem acessar este recurso
+   // HTTP 403: Forbidden
+   if(! req?.authUser?.is_admin) return res.status(403).end()
 
+    const result = await prisma.user.findMany({
+     omit: { password: true }
+   }
+)
+
+    
     // HTTP 200: OK (implícito)
     res.send(result)
   }
@@ -51,7 +65,15 @@ controller.retrieveAll = async function(req, res) {
 
 controller.retrieveOne = async function(req, res) {
   try {
+   // Somente usuários administradores ou o próprio usuário
+   // autenticado podem acessar este recurso
+   // HTTP 403: Forbidden
+   if(! (req?.authUser?.is_admin ||
+     Number(req?.authUser?.id) === Number(req.params.id)))
+     return res.status(403).end()
+
     const result = await prisma.user.findUnique({
+      omit: { password: true },
       where: { id: Number(req.params.id) }
     })
 
@@ -70,13 +92,19 @@ controller.retrieveOne = async function(req, res) {
 
 controller.update = async function(req, res) {
   try {
-   // Caso exista o campo "password" em req.body, é
+   // Somente usuários administradores ou o próprio usuário
+   // autenticado podem acessar este recurso
+   // HTTP 403: Forbidden
+   if(! (req?.authUser?.is_admin ||
+     Number(req?.authUser?.id) === Number(req.params.id)))
+     return res.status(403).end()
+
+    // Caso exista o campo "password" em req.body, é
    // necessário gerar o hash da senha antes de
    // armazená-la no BD, usando o algoritmo argon2
    if(req.body.password) {
      req.body.password = await argon2.hash(req.body.password, ARGON2_CONFIG)
    }
-
 
 
     const result = await prisma.user.update({
@@ -99,6 +127,10 @@ controller.update = async function(req, res) {
 
 controller.delete = async function(req, res) {
   try {
+   // Somente usuários administradores podem acessar este recurso
+   // HTTP 403: Forbidden
+   if(! req?.authUser?.is_admin) return res.status(403).end()
+
     await prisma.user.delete({
       where: { id: Number(req.params.id) }
     })
@@ -140,21 +172,18 @@ controller.login = async function(req, res) {
       if(! user) return res.status(401).end()
 
       // Usuário encontrado, vamos conferir a senha
-      // let passwordIsValid
-      // if(req.body?.username === 'admin' && req.body?.password === 'admin123') passwordIsValid = true
-      // else passwordIsValid = user.password === req.body?.password
-
-      let passwordIsValid
-      if(req.body?.username === 'admin' && req.body?.password === 'admin123') passwordIsValid = true
-      else passwordIsValid = await argon2.verify(user.password, req.body?.password)
+       let passwordIsValid
+     if(req.body?.username === 'admin' && req.body?.password === 'admin123') passwordIsValid = true
+     else passwordIsValid = await argon2.verify(user.password, req.body?.password)
 
       // Se a senha estiver errada, retorna
       // HTTP 401: Unauthorized
       if(! passwordIsValid) return res.status(401).end()
 
-      // Eliminamos o campo "password" dos dados do usuário antes de incluí-lo
-      // no payload do token JWT
-      if(user.password) delete user.password
+        // Eliminamos o campo "password" dos dados do usuário antes de incluí-lo
+     // no payload do token JWT
+     if(user.password) delete user.password
+
 
       // Usuário e senha OK, passamos ao procedimento de gerar o token
       const token = jwt.sign(
@@ -162,15 +191,6 @@ controller.login = async function(req, res) {
         process.env.TOKEN_SECRET,   // Senha para criptografar o token
         { expiresIn: '24h' }        // Prazo de validade do token
       )
-
-       // Formamos o cookie para enviar ao front-end
-     res.cookie(process.env.AUTH_COOKIE_NAME, token, {
-       httpOnly: true, // O cookie ficará inacessível para o JS no front-end
-       secure: true,   // O cookie será criptografado em conexões https
-       sameSite: 'None',
-       path: '/',
-       maxAge: 24 * 60 * 60 * 100  // 24h
-     })
 
       // Formamos o cookie para enviar ao front-end
       res.cookie(process.env.AUTH_COOKIE_NAME, token, {
@@ -183,7 +203,7 @@ controller.login = async function(req, res) {
 
       // Retorna o token e o usuário autenticado com
       // HTTP 200: OK (implícito)
-      res.send({token, user})
+      res.send({user})
 
   }
   catch(error) {
@@ -192,9 +212,6 @@ controller.login = async function(req, res) {
     // HTTP 500: Internal Server Error
     res.status(500).end()
   }
-
-  res.send({user})
-
 }
 
 controller.me = function(req, res) {
