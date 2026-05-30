@@ -18,7 +18,6 @@ import AuthUserContext from './contexts/AuthUserContext'
 import myfetch from './lib/myfetch'
 
 function App() {
-
   // Variável de estado que armazena as informações
   // do usuário autenticado
   const [authUser, setAuthUser] = React.useState(null)
